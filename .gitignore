@@ -1,0 +1,6 @@
+# Local settings: may hold credentials. Commit only .env.example.
+.env
+# Pre-change exports written by the scripts.
+output/
+node_modules/
+.DS_Store

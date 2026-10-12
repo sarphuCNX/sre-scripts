@@ -1,0 +1,11 @@
+{
+  "name": "sre-scripts",
+  "private": true,
+  "description": "Standalone SRE scripts; each folder is copied to a server and run there with bash + mongosh.",
+  "scripts": {
+    "test": "node --test */test/*.test.js"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
