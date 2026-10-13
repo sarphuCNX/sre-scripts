@@ -7,6 +7,7 @@ it there. Nothing to install beyond what the folder's README names (usually bash
 | --- | --- | --- |
 | [`whiteboard-v3-items-cleanup/`](whiteboard-v3-items-cleanup/README.md) | Backs up and clears the dangling legacy `flowitems.flow.items` array of one migrated v3 BrightClass whiteboard | bash, mongosh |
 | [`host-cpu-diagnose/`](host-cpu-diagnose/README.md) | Read-only snapshot of why a Docker host's CPU/load is high (CPU split, forks, listen drops, reclaim, dockerd, top processes and zombie parents mapped to containers); saves the report to `./logs/` | bash, procps, iproute2, docker CLI |
+| [`ingress-herd-diagnose/`](ingress-herd-diagnose/README.md) | Read-only follow-up for a front-door connection herd: what restarted Redis / the socket servers around an event time, and which upstream behind nginx holds the connections (nginx json log file + nginx netns `ss`); saves the report to `./logs/` | bash, procps, iproute2, util-linux, systemd, docker CLI, redis-cli, sudo |
 
 ## Conventions
 
