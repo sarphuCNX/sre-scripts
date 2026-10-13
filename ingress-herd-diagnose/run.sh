@@ -15,7 +15,7 @@
 #     --env-file    .env to read (default: .env next to this script, if present)
 #   Variables already exported in your shell win over the file.
 #
-# READ-ONLY on the host. It reads journals (`journalctl`), the nginx container's json log FILE
+# READ-ONLY on the host. It reads journals (`journalctl`; Redis's unit from its PID), the nginx container's json log FILE
 # (`tail` from the end, so dockerd is not involved), connection tables inside nginx's network
 # namespace (`nsenter -n ss`), `docker inspect`, a bounded `docker logs --since --until` of
 # the socket servers around the event, `redis-cli INFO server`, `ps`, `last` and `pgrep`.
@@ -336,14 +336,17 @@ print_header() {
 
 # print_restart_event EVENT_EPOCH — what restarted Redis and the socket servers around the event.
 print_restart_event() {
-  local event_epoch="$1" since until redis_pid container
+  local event_epoch="$1" since until redis_pid redis_unit container
   since="$(journal_time "$((event_epoch - MINUTES_BEFORE * SECONDS_PER_MINUTE))")"
   until="$(journal_time "$((event_epoch + MINUTES_AFTER * SECONDS_PER_MINUTE))")"
 
-  section "A1. ${REDIS_SERVICE}: start time and uptime"
-  redis_pid="$(bounded "${COMMAND_TIMEOUT_SECONDS}" pidof "${REDIS_SERVICE}" | awk '{print $1}')"
+  section "A1. ${REDIS_SERVICE}: server start time and uptime"
+  # -o -x: the oldest process named exactly redis-server, i.e. the server, never a forked
+  # redis-rdb-bgsave child (pidof matches both because they share the binary).
+  redis_pid="$(bounded "${COMMAND_TIMEOUT_SECONDS}" pgrep -o -x "${REDIS_SERVICE}")"
   if [[ -n "${redis_pid}" ]]; then
     bounded "${COMMAND_TIMEOUT_SECONDS}" ps -o pid,lstart,etime,args -p "${redis_pid}" | cut -c1-120
+    redis_unit="$(bounded "${COMMAND_TIMEOUT_SECONDS}" ps -o unit= -p "${redis_pid}" | tr -d ' ')"
   else
     printf '%s not running\n' "${REDIS_SERVICE}"
   fi
@@ -360,9 +363,13 @@ print_restart_event() {
   privileged "${COMMAND_TIMEOUT_SECONDS}" journalctl -k --since "${since}" --until "${until}" --no-pager |
     grep -iE 'out of memory|killed process|oom-kill' | cut -c1-200 | tail -10
 
-  section "A4. ${REDIS_SERVICE} service log in the window"
-  privileged "${COMMAND_TIMEOUT_SECONDS}" journalctl -u "${REDIS_SERVICE}" --since "${since}" --until "${until}" --no-pager |
-    cut -c1-200 | tail -15
+  section "A4. Redis unit (${redis_unit:-unknown}) journal in the window"
+  if [[ "${redis_unit:-}" == *.service ]]; then
+    privileged "${COMMAND_TIMEOUT_SECONDS}" journalctl -u "${redis_unit}" --since "${since}" --until "${until}" --no-pager |
+      cut -c1-200 | tail -15
+  else
+    printf '(Redis is not running as a systemd service; see redis-restart-diagnose for its own log)\n'
+  fi
 
   section "A5. dockerd log in the window (restart / exit / kill / signal)"
   privileged "${COMMAND_TIMEOUT_SECONDS}" journalctl -u docker --since "${since}" --until "${until}" --no-pager |
@@ -419,7 +426,8 @@ print_nginx_connections() {
 
 print_leftover_log_readers() {
   section "D. leftover docker logs readers (should be: none)"
-  bounded "${COMMAND_TIMEOUT_SECONDS}" pgrep -af 'docker logs' || printf 'none\n'
+  # '[d]ocker logs' matches a real `docker logs` client but not this pgrep's own command line.
+  bounded "${COMMAND_TIMEOUT_SECONDS}" pgrep -af '[d]ocker logs' || printf 'none\n'
 }
 
 print_report() {

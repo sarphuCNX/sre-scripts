@@ -27,6 +27,8 @@ const CONTROLLER_STARTED_EPOCH = '1791868239';
 const NGINX_PID = '4242';
 const CONTROLLER_UPSTREAM = '172.18.0.9:7101';
 const LIVECLASS_UPSTREAM = '172.18.0.12:80';
+const REDIS_SERVER_PID = '3565682';
+const REDIS_BGSAVE_PID = '3660944';
 
 // --- helpers ----------------------------------------------------------------------------------
 
@@ -148,11 +150,17 @@ class ScriptRun {
     bin('journalctl', [
       record('journalctl'),
       'if [[ "$1" == -k ]]; then echo "Oct 13 05:10:30 host kernel: Out of memory: Killed process 3400000 (redis-server)"; exit; fi',
-      'if [[ "$2" == redis-server ]]; then echo "Oct 13 05:10:31 host systemd[1]: redis-server.service: Main process exited, code=killed, status=9/KILL"; exit; fi',
+      'if [[ "$2" == redis-server* ]]; then echo "Oct 13 05:10:31 host systemd[1]: redis-server.service: Main process exited, code=killed, status=9/KILL"; exit; fi',
       'echo "Oct 13 05:10:38 host dockerd[1057]: level=info msg=\\"restarting container\\" container=controller-server"',
     ].join('\n'));
-    bin('pidof', '[[ "$1" == redis-server ]] && echo 3565682');
-    bin('ps', 'echo "    PID                  STARTED     ELAPSED COMMAND"; echo "3565682 Tue Oct 13 05:10:32 2026    01:12:00 /usr/bin/redis-server 127.0.0.1:6379"');
+    // Like the real host: pidof also returns the bgsave child, first. The script must use pgrep -o -x.
+    bin('pidof', `[[ "$1" == redis-server ]] && echo "${REDIS_BGSAVE_PID} ${REDIS_SERVER_PID}"`);
+    bin('ps', [
+      'case "$*" in',
+      '  *unit=*) echo "${FAKE_UNIT:-redis-server.service}" ;;',
+      '  *) echo "    PID                  STARTED     ELAPSED COMMAND"; echo "${@: -1} Tue Oct 13 05:10:32 2026    01:12:00 /usr/bin/redis-server 127.0.0.1:6379" ;;',
+      'esac',
+    ].join('\n'));
     bin('redis-cli', 'echo "uptime_in_seconds:4320"');
     bin('last', 'echo "ubuntu   pts/0  100.122.95.2  Tue Oct 13 05:55:00 2026   still logged in"');
     bin('nsenter', [
@@ -171,7 +179,12 @@ class ScriptRun {
       'for i in 1 2; do echo "CLOSE-WAIT 0 0 a b"; done',
       'echo "ESTAB 0 0 a b"',
     ].join('\n'));
-    bin('pgrep', 'exit 1');
+    bin('pgrep', [
+      record('pgrep'),
+      `[[ "$*" == "-o -x redis-server" ]] && { echo ${REDIS_SERVER_PID}; exit; }`,
+      '[[ "${FAKE_LOG_READER:-0}" == 1 ]] && { echo "777 docker logs --tail 200 controller-server"; exit; }',
+      'exit 1',
+    ].join('\n'));
   }
 
   run(args = [], env = {}) {
@@ -507,4 +520,56 @@ test('--help prints the usage and exits 0', () => {
   const result = scriptRun.run(['--help']);
 
   assert.match(result.stdout, /READ-ONLY on the host/);
+});
+
+// --- end to end: Redis process, Redis unit, leftover readers -----------------------------------
+
+test('a run reports the Redis server process, not the bgsave child that pidof returns first', () => {
+  const scriptRun = new ScriptRun();
+
+  const result = scriptRun.run();
+
+  assert.match(result.stdout, new RegExp(`A1\\.[^\\n]*\\n[^\\n]*\\n${REDIS_SERVER_PID} `));
+});
+
+test('a run reads the journal of the unit Redis actually runs under', () => {
+  const scriptRun = new ScriptRun();
+
+  scriptRun.run();
+
+  assert.ok(scriptRun.calls('journalctl').includes(
+    '-u redis-server.service --since 2026-10-13 04:50:39 UTC --until 2026-10-13 05:20:39 UTC --no-pager',
+  ));
+});
+
+test('a run when Redis is not a systemd service skips the Redis unit journal', () => {
+  const scriptRun = new ScriptRun();
+
+  scriptRun.run([], { FAKE_UNIT: 'session-5.scope' });
+
+  assert.ok(scriptRun.calls('journalctl').every((call) => !call.startsWith('-u redis')));
+});
+
+test('a run when Redis is not a systemd service says so', () => {
+  const scriptRun = new ScriptRun();
+
+  const result = scriptRun.run([], { FAKE_UNIT: 'session-5.scope' });
+
+  assert.match(result.stdout, /Redis is not running as a systemd service/);
+});
+
+test('a run searches for leftover readers with a pattern that cannot match its own pgrep', () => {
+  const scriptRun = new ScriptRun();
+
+  scriptRun.run();
+
+  assert.ok(scriptRun.calls('pgrep').includes('-af [d]ocker logs'));
+});
+
+test('a run reports a real leftover docker logs reader', () => {
+  const scriptRun = new ScriptRun();
+
+  const result = scriptRun.run([], { FAKE_LOG_READER: '1' });
+
+  assert.match(result.stdout, /leftover docker logs readers[^\n]*\n777 docker logs --tail 200 controller-server\n/);
 });

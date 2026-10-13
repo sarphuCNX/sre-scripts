@@ -44,7 +44,7 @@ No `.env` is needed. To change a default, `cp .env.example .env` and edit it.
 | `INGRESS_DIAG_NGINX_CONTAINER` | `brightclass-nginx` | Container whose log and network namespace are read |
 | `INGRESS_DIAG_SOCKET_CONTAINERS` | `controller-server broadcast-server` | Socket servers investigated; the first one's start time is the default event |
 | `INGRESS_DIAG_UPSTREAM_CONTAINERS` | `controller-server broadcast-server liveclass-server kneura-web-teach-server-pm2 navneet-web-teach-server` | Upstreams whose IPs are listed |
-| `INGRESS_DIAG_REDIS_SERVICE` | `redis-server` | Host Redis unit / process name |
+| `INGRESS_DIAG_REDIS_SERVICE` | `redis-server` | Host Redis process name for `pgrep -o -x` (the server, never a `redis-rdb-bgsave` child); its systemd unit is read from that PID |
 | `INGRESS_DIAG_MINUTES_BEFORE` / `_AFTER` | `20` / `10` | Journal window around the event |
 | `INGRESS_DIAG_NGINX_TAIL_LINES` | `100000` | Lines read from the end of nginx's log (~1 min of a herd) |
 | `INGRESS_DIAG_COMMAND_TIMEOUT_SECONDS` | `30` | Timeout per command |
@@ -60,12 +60,12 @@ Exit codes: `0` report printed, `2` configuration error (bad setting or event ti
 | A1 | Redis started at about the event time means it restarted together with the socket servers |
 | A2 | `previous_exit` just before `started`, and the restart count |
 | A3 | `Killed process … (redis-server)` or a socket server means the kernel OOM killer was the trigger |
-| A4 / A5 | How Redis exited, and whether dockerd restarted the containers (restart policy) or someone stopped them |
+| A4 / A5 | How Redis exited (journal of the unit it actually runs under; if it isn't a systemd service, run `redis-restart-diagnose`), and whether dockerd restarted the containers (restart policy) or someone stopped them |
 | A6 | An operator login at about the event time suggests a manual restart |
 | A7 | The socket servers' last words, e.g. a Redis `ECONNREFUSED` or a crash |
 | B | `504` / `499` mean an upstream is holding requests; `101` means websocket churn; `200` on `/socket.io/` means long-polls. `upstream timed out -> ip:port` names the holder |
 | C | The upstream `ip:port` with the most ESTABLISHED connections is the holder; map it with the IP list |
-| D | Anything but `none` means a `docker logs` reader is still running |
+| D | Anything but `none` means a `docker logs` reader is still running (the `[d]ocker logs` pattern can't match the check itself) |
 
 ## Tests
 
