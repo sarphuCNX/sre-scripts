@@ -2,5 +2,7 @@
 .env
 # Pre-change exports written by the scripts.
 output/
+# Reports written by read-only diagnostic scripts.
+logs/
 node_modules/
 .DS_Store
